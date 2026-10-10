@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Ruwix 3D Rubik's Cube</title>
+  
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+    }
+
+    body {
+      background: #111115;
+      color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    .header-ui {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 10px;
+      padding: 12px;
+      background: #1a1a20;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+      z-index: 10;
+    }
+
+    button {
+      color: white;
+      border: none;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 700;
+      border-radius: 6px;
+      cursor: pointer;
+      box-shadow: 0 3px 6px rgba(0,0,0,0.3);
+      transition: transform 0.1s, opacity 0.2s;
+      flex: 1;
+      max-width: 150px;
+      text-transform: uppercase;
+    }
+
+    button:active { transform: scale(0.95); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .btn-shuffle { background: #3b82f6; }
+    .btn-solve { background: #10b981; }
+    .btn-ad { background: #f59e0b; }
+
+    #canvas-container {
+      flex: 1;
+      width: 100%;
+      height: 100%;
+      position: relative;
+    }
+
+    .status-banner {
+      position: absolute;
+      bottom: 25px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(31, 41, 55, 0.95);
+      color: #fff;
+      padding: 10px 20px;
+      border-radius: 20px;
+      font-size: 14px;
+      font-weight: 600;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.6);
+      display: none;
+      z-index: 20;
+      text-align: center;
+      border: 1px solid #374151;
+    }
+
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0, 0, 0, 0.85);
+      z-index: 100;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .modal-content {
+      background: #1f2937;
+      padding: 25px;
+      border-radius: 12px;
+      text-align: center;
+      max-width: 300px;
+      width: 85%;
+    }
+
+    .ad-timer {
+      font-size: 36px;
+      font-weight: 900;
+      color: #f59e0b;
+      margin: 15px 0;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header-ui">
+    <button class="btn-shuffle" id="btnShuffle" onclick="shuffleCube()">Shuffle</button>
+    <button class="btn-solve" id="btnSolve" onclick="autoSolve()">Computer Solve</button>
+    <button class="btn-ad" onclick="triggerAdForHint()">Get Hint (Ad)</button>
+  </div>
+
+  <div id="canvas-container">
+    <div id="statusBanner" class="status-banner"></div>
+  </div>
+
+  <div class="modal-overlay" id="adModal">
+    <div class="modal-content">
+      <h2>Sponsored Ad</h2>
+      <p style="margin-top: 8px; color: #9ca3af; font-size: 13px;">Hint unlocking in...</p>
+      <div class="ad-timer" id="adTimer">5</div>
+    </div>
+  </div>
+
+  <script>
+    window.addEventListener('DOMContentLoaded', () => {
+      const container = document.getElementById('canvas-container');
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x111115);
+
+      const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
+
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(container.clientWidth, container.clientHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      container.appendChild(renderer.domElement);
+
+      let cameraAngleX = 0.5;
+      let cameraAngleY = 0.8;
+      const cameraRadius = 9.5;
+
+      function updateCamera() {
+        camera.position.x = cameraRadius * Math.sin(cameraAngleY) * Math.cos(cameraAngleX);
+        camera.position.y = cameraRadius * Math.sin(cameraAngleX);
+        camera.position.z = cameraRadius * Math.cos(cameraAngleY) * Math.cos(cameraAngleX);
+        camera.lookAt(0, 0, 0);
+      }
+      updateCamera();
+
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
+      scene.add(ambientLight);
+      const dirLight = new THREE.DirectionalLight(0xffffff, 0.4);
+      dirLight.position.set(10, 20, 15);
+      scene.add(dirLight);
+
+      function createStickerTexture(colorHex) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 256; canvas.height = 256;
+        const ctx = canvas.getContext('2d');
+        
+        ctx.fillStyle = '#111111';
+        ctx.fillRect(0, 0, 256, 256);
+        
+        ctx.fillStyle = colorHex;
+        const margin = 12, radius = 35, size = 256 - margin * 2;
+        
+        ctx.beginPath();
+        ctx.moveTo(margin + radius, margin);
+        ctx.lineTo(margin + size - radius, margin);
+        ctx.quadraticCurveTo(margin + size, margin, margin + size, margin + radius);
+        ctx.lineTo(margin + size, margin + size - radius);
+        ctx.quadraticCurveTo(margin + size, margin + size, margin + size - radius, margin + size);
+        ctx.lineTo(margin + radius, margin + size);
+        ctx.quadraticCurveTo(margin, margin + size, margin, margin + size - radius);
+        ctx.lineTo(margin, margin + radius);
+        ctx.quadraticCurveTo(margin, margin, margin + radius, margin);
+        ctx.closePath();
+        ctx.fill();
+
+        return new THREE.CanvasTexture(canvas);
+      }
+
+      const colorHexes = ['#C41E3A', '#0051BA', '#FFFFFF', '#FFD500', '#009E60', '#FF5800'];
+      const materials = colorHexes.map(hex => new THREE.MeshLambertMaterial({ map: createStickerTexture(hex) }));
+      const blackMaterial = new THREE.MeshLambertMaterial({ color: 0x111111 });
+
+      const cubies = [];
+      const spacing = 1.02;
+      const cubeGroup = new THREE.Group();
+      scene.add(cubeGroup);
+
+      for (let x = -1; x <= 1; x++) {
+        for (let y = -1; y <= 1; y++) {
+          for (let z = -1; z <= 1; z++) {
+            const geometry = new THREE.BoxGeometry(0.96, 0.96, 0.96);
+            const cubieMats = [
+              x === 1 ? materials[0] : blackMaterial,
+              x === -1 ? materials[1] : blackMaterial,
+              y === 1 ? materials[2] : blackMaterial,
+              y === -1 ? materials[3] : blackMaterial,
+              z === 1 ? materials[4] : blackMaterial,
+              z === -1 ? materials[5] : blackMaterial
+            ];
+
+            const cubie = new THREE.Mesh(geometry, cubieMats);
+            cubie.position.set(x * spacing, y * spacing, z * spacing);
+            cubeGroup.add(cubie);
+            cubies.push(cubie);
+          }
+        }
+      }
+
+      const raycaster = new THREE.Raycaster();
+      const mouse = new THREE.Vector2();
+      let isDragging = false;
+      let isOrbiting = false;
+      let clickedCubie = null;
+      let clickedNormal = null;
+      let dragStart = { x: 0, y: 0 };
+      let isAnimating = false;
+
+      let moveHistory = [];
+
+      function getMousePos(e) {
+        const rect = renderer.domElement.getBoundingClientRect();
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        return {
+          x: clientX,
+          y: clientY,
+          ndcX: ((clientX - rect.left) / rect.width) * 2 - 1,
+          ndcY: -((clientY - rect.top) / rect.height) * 2 + 1
+        };
+      }
+
+      function onPointerDown(e) {
+        if (isAnimating) return;
+        const pos = getMousePos(e);
+        mouse.x = pos.ndcX;
+        mouse.y = pos.ndcY;
+        dragStart = { x: pos.x, y: pos.y };
+        
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObjects(cubies);
+        
+        if (intersects.length > 0) {
+          isDragging = true;
+          isOrbiting = false;
+          clickedCubie = intersects[0].object;
+          clickedNormal = intersects[0].face.normal.clone().transformDirection(clickedCubie.matrixWorld).round();
+        } else {
+          isDragging = true;
+          isOrbiting = true;
+          clickedCubie = null;
+        }
+      }
+
+      function onPointerMove(e) {
+        if (!isDragging) return;
+        const pos = getMousePos(e);
+        const deltaX = pos.x - dragStart.x;
+        const deltaY = pos.y - dragStart.y;
+
+        if (isOrbiting) {
+          cameraAngleY -= deltaX * 0.008;
+          cameraAngleX += deltaY * 0.008; // CAMERA MOVING UP/DOWN
+          cameraAngleX = Math.max(-Math.PI / 2.1, Math.min(Math.PI / 2.1, cameraAngleX));
+          updateCamera();
+          dragStart = { x: pos.x, y: pos.y };
+        } else if (clickedCubie && (Math.abs(deltaX) > 15 || Math.abs(deltaY) > 15)) {
+          determineMoveFromSwipe(deltaX, deltaY);
+          isDragging = false;
+          clickedCubie = null;
+        }
+      }
+
+      function onPointerUp() {
+        isDragging = false;
+        isOrbiting = false;
+        clickedCubie = null;
+      }
+
+      container.addEventListener('mousedown', onPointerDown);
+      window.addEventListener('mousemove', onPointerMove);
+      window.addEventListener('mouseup', onPointerUp);
+
+      container.addEventListener('touchstart', onPointerDown, { passive: true });
+      window.addEventListener('touchmove', onPointerMove, { passive: true });
+      window.addEventListener('touchend', onPointerUp);
+
+      function determineMoveFromSwipe(dx, dy) {
+        const pos = new THREE.Vector3();
+        clickedCubie.getWorldPosition(pos);
+
+        const cameraRight = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+        const cameraUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
+        
+        const swipeWorldDir = new THREE.Vector3()
+          .addScaledVector(cameraRight, dx)
+          .addScaledVector(cameraUp, -dy) // PIECE ROTATING UP/DOWN
+          .normalize();
+
+        const rotationAxis = new THREE.Vector3().crossVectors(clickedNormal, swipeWorldDir);
+        
+        let absX = Math.abs(rotationAxis.x);
+        let absY = Math.abs(rotationAxis.y);
+        let absZ = Math.abs(rotationAxis.z);
+
+        let chosenAxis = new THREE.Vector3();
+        let layerCoord = '';
+        let targetValue = 0;
+
+        if (absX > absY && absX > absZ) {
+          chosenAxis.set(Math.sign(rotationAxis.x), 0, 0);
+          layerCoord = 'x';
+          targetValue = pos.x;
+        } else if (absY > absX && absY > absZ) {
+          chosenAxis.set(0, Math.sign(rotationAxis.y), 0);
+          layerCoord = 'y';
+          targetValue = pos.y;
+        } else {
+          chosenAxis.set(0, 0, Math.sign(rotationAxis.z));
+          layerCoord = 'z';
+          targetValue = pos.z;
+        }
+
+        executeTurn(layerCoord, targetValue, chosenAxis, Math.PI / 2, true);
+      }
+
+      function executeTurn(coord, coordValue, axis, angle, recordMove = true, speedMultiplier = 1) {
+        if (isAnimating && recordMove) return;
+        isAnimating = true;
+
+        if (recordMove) {
+          moveHistory.push({ coord, coordValue, axis: axis.clone(), angle });
+        }
+
+        const activeGroup = new THREE.Group();
+        scene.add(activeGroup);
+
+        const tolerance = 0.3;
+        cubies.forEach(c => {
+          const wp = new THREE.Vector3();
+          c.getWorldPosition(wp);
+          if (Math.abs(wp[coord] - coordValue) < tolerance) {
+            activeGroup.attach(c);
+          }
+        });
+
+        let currentAngle = 0;
+        const speed = 0.15 * speedMultiplier;
+        const targetAngle = angle;
+        const dir = targetAngle > 0 ? 1 : -1;
+
+        function animateTurn() {
+          if (Math.abs(currentAngle) < Math.abs(targetAngle)) {
+            const step = speed * dir;
+            activeGroup.rotateOnWorldAxis(axis, step);
+            currentAngle += step;
+            requestAnimationFrame(animateTurn);
+          } else {
+            activeGroup.rotateOnWorldAxis(axis, targetAngle - currentAngle);
+            while (activeGroup.children.length > 0) {
+              const c = activeGroup.children[0];
+              cubeGroup.attach(c);
+              
+              c.position.x = Math.round(c.position.x / spacing) * spacing;
+              c.position.y = Math.round(c.position.y / spacing) * spacing;
+              c.position.z = Math.round(c.position.z / spacing) * spacing;
+              
+              const euler = new THREE.Euler().setFromQuaternion(c.quaternion);
+              euler.x = Math.round(euler.x / (Math.PI/2)) * (Math.PI/2);
+              euler.y = Math.round(euler.y / (Math.PI/2)) * (Math.PI/2);
+              euler.z = Math.round(euler.z / (Math.PI/2)) * (Math.PI/2);
+              c.quaternion.setFromEuler(euler);
+            }
+            scene.remove(activeGroup);
+            isAnimating = false;
+          }
+        }
+        animateTurn();
+      }
+
+      window.shuffleCube = function() {
+        if (isAnimating) return;
+        document.getElementById('btnShuffle').disabled = true;
+        document.getElementById('btnSolve').disabled = true;
+        
+        const axes = [new THREE.Vector3(1,0,0), new THREE.Vector3(0,1,0), new THREE.Vector3(0,0,1)];
+        const coords = ['x', 'y', 'z'];
+        const values = [-spacing, 0, spacing];
+        
+        let count = 0;
+        const totalMoves = 12;
+
+        function performRandomMove() {
+          if (count >= totalMoves) {
+            document.getElementById('btnShuffle').disabled = false;
+            document.getElementById('btnSolve').disabled = false;
+            showStatus("Cube Shuffled!");
+            return;
+          }
+
+          const rIdx = Math.floor(Math.random() * 3);
+          executeTurn(coords[rIdx], values[Math.floor(Math.random() * 3)], axes[rIdx], (Math.random() > 0.5 ? 1 : -1) * (Math.PI / 2), true, 1.8);
+          
+          setTimeout(performRandomMove, 220);
+          count++;
+        }
+        performRandomMove();
+      };
+
+      window.autoSolve = function() {
+        if (isAnimating || moveHistory.length === 0) {
+          if (moveHistory.length === 0) showStatus("Cube is already solved!");
+          return;
+        }
+        
+        document.getElementById('btnShuffle').disabled = true;
+        document.getElementById('btnSolve').disabled = true;
+        showStatus("Computer Solving...");
+
+        function reverseNextMove() {
+          if (moveHistory.length === 0) {
+            document.getElementById('btnShuffle').disabled = false;
+            document.getElementById('btnSolve').disabled = false;
+            showStatus("Solved!");
+            return;
+          }
+
+          const lastMove = moveHistory.pop();
+          executeTurn(lastMove.coord, lastMove.coordValue, lastMove.axis, -lastMove.angle, false, 2.2);
+          setTimeout(reverseNextMove, 160);
+        }
+        
+        reverseNextMove();
+      };
+
+      function showStatus(text) {
+        const banner = document.getElementById('statusBanner');
+        banner.textContent = text;
+        banner.style.display = 'block';
+        setTimeout(() => { banner.style.display = 'none'; }, 2000);
+      }
+
+      window.triggerAdForHint = function() {
+        const modal = document.getElementById('adModal');
+        const timerDisplay = document.getElementById('adTimer');
+        let timeLeft = 5;
+        
+        timerDisplay.textContent = timeLeft;
+        modal.style.display = 'flex';
+
+        const interval = setInterval(() => {
+          timeLeft--;
+          timerDisplay.textContent = timeLeft;
+          if (timeLeft <= 0) {
+            clearInterval(interval);
+            modal.style.display = 'none';
+            showStatus("Hint: Complete White Cross First!");
+          }
+        }, 1000);
+      };
+
+      window.addEventListener('resize', () => {
+        camera.aspect = container.clientWidth / container.clientHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(container.clientWidth, container.clientHeight);
+      });
+
+      function animate() {
+        requestAnimationFrame(animate);
+        renderer.render(scene, camera);
+      }
+      animate();
+    });
+  </script>
+</body>
+</html>
